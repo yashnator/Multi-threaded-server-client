@@ -11,15 +11,56 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <sstream>
 
-
+using namespace std;
 // PORT number
-#define PORT 4444
+#define PORT 55555
+
+
+
+
+vector<string> splitMessage(const string &message) {
+    vector<string> words;
+    string currentWord;
+    istringstream stream(message);
+
+    // Iterate through the message and split by ',' or '\n'
+    while (getline(stream, currentWord, ',')) {
+        // Check if the word contains a newline or 'EOF'
+        size_t newlinePos = currentWord.find('\n');
+        if (newlinePos != string::npos) {
+            // Split at the newline
+            string wordBeforeNewline = currentWord.substr(0, newlinePos);
+            if (!wordBeforeNewline.empty()) {
+                words.push_back(wordBeforeNewline);  // Add the word before '\n'
+            }
+
+            // If "EOF" appears before the newline, treat it as a word
+            if (wordBeforeNewline == "EOF") {
+                break;  // Stop processing as EOF indicates the end of transmission
+            }
+        } else {
+            // Add the word normally if no newline is found
+            words.push_back(currentWord);
+        }
+    }
+
+    return words;
+}
+
 
 int main()
 {
 	// Socket id
 	int clientSocket, ret;
+
+	int k = 5;
+	int p = 4;
+
 
 	// Client socket structure
 	struct sockaddr_in cliAddr;
@@ -66,45 +107,57 @@ int main()
 
 	printf("Connected to Server.\n");
 
-	while (1) {
+	map<string, int> wordFreq;
 
-		// recv() receives the message
-		// from server and stores in buffer
-		// if (recv(clientSocket, buffer, 1024, 0)
-		// 	< 0) {
-		// 	printf("Error in receiving data.\n");
-		// }
+	int cur = 1;
+	while(true){
+		string message = to_string(cur);
+		message+='\n';
+		int sbyteCount = send(clientSocket, message.c_str(), message.length(), 0);
+		if (sbyteCount < 0) {
+			cout << "Client send error: " <<  endl;
+			return -1;
+		}
+		else {
+			cout << "Client: Sent " << sbyteCount << " bytes" << endl;
+		}
 
-		// // Printing the message on screen
-		// else {
-		// 	printf("Server: %s\n", buffer);
-		// 	bzero(buffer, sizeof(buffer));
-		// }
+		if (sbyteCount < 0) {
+			cout << "Client send error: " << endl;
+			return -1;
+		}
+		char receiveBuffer[1024];
 
+		int rbyteCount = recv(clientSocket, receiveBuffer, 1024, 0);
 
-        // Sending data to the server
-        char buffer[200];
-        std::cout << "Enter the message: ";
-        std::cin.getline(buffer, 200);
-        int sbyteCount = send(clientSocket, buffer, 200, 0);
-        if (sbyteCount < 0) {
-            std::cout << "Client send error: " << std::endl;
-            return -1;
-        } else {
-            std::cout << "Client: Sent " << sbyteCount << " bytes" << std::endl;
-        }
+		receiveBuffer[rbyteCount] = '\0';
 
-        // Receiving data from the server
-        char receiveBuffer[200];
-        int rbyteCount = recv(clientSocket, receiveBuffer, 200, 0);
-        if (rbyteCount < 0) {
-            std::cout << "Client recv error: "  << std::endl;
-            return 0;
-        } else {
-            std::cout << "Client: Received data: " << receiveBuffer << std::endl;
-        }
+		// Convert the buffer to string
+		string receivedMessage(receiveBuffer);
+		vector<string> newwords = splitMessage(receivedMessage);
 
-    }
+		if (rbyteCount < 0) {
+			cout << "Client recv error: "  << endl;
+			return 0;
+		} else {
+			cout << "Client: Received data: " << receivedMessage << endl;
+		}
+
+		bool done = false;
+		for(auto word: newwords){
+			if(word == "EOF" || word == "$$"){
+				done = true;
+				break;
+			}
+			wordFreq[word]++;
+		}
+		if(done)break;
+		cur+=k;
+	}
+
+	for(auto p: wordFreq){
+		cout<<p.first<<" "<<p.second<<endl;
+	}
 
 	return 0;
 }
