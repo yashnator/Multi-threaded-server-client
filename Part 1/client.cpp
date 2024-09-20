@@ -1,163 +1,113 @@
-// Client Side program to test
-// the TCP server that returns
-// a 'hi client' message
-
+#include <fstream>
+#include <iostream>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <sstream>
+#include <nlohmann/json.hpp>
+
+#define MAX_MESSAGE_LEN     100
 
 using namespace std;
-// PORT number
-#define PORT 55555
+using json = nlohmann::json;
 
-
-
-
-vector<string> splitMessage(const string &message) {
-    vector<string> words;
-    string currentWord;
-    istringstream stream(message);
-
-    // Iterate through the message and split by ',' or '\n'
-    while (getline(stream, currentWord, ',')) {
-        // Check if the word contains a newline or 'EOF'
-        size_t newlinePos = currentWord.find('\n');
-        if (newlinePos != string::npos) {
-            // Split at the newline
-            string wordBeforeNewline = currentWord.substr(0, newlinePos);
-            if (!wordBeforeNewline.empty()) {
-                words.push_back(wordBeforeNewline);  // Add the word before '\n'
-            }
-
-            // If "EOF" appears before the newline, treat it as a word
-            if (wordBeforeNewline == "EOF") {
-                break;  // Stop processing as EOF indicates the end of transmission
-            }
-        } else {
-            // Add the word normally if no newline is found
-            words.push_back(currentWord);
-        }
-    }
-
-    return words;
+json getServerConfig(string fname){
+    std::ifstream jsonConfig("config.json");
+    json serverConfig = json::parse(jsonConfig);
+    return serverConfig;
 }
 
+void count_words_and_print_output(string &recieved_string) {
 
-int main()
-{
-	// Socket id
-	int clientSocket, ret;
+}
 
-	int k = 5;
-	int p = 4;
+void main_client_process(int socketfd, char* buffer, int words_per_packet) { 
+    map<string, int> word_map;
+    int cnt_bytes = 0, itr = 0, offset = 1;
+    while(true){
+        bool read_completed = false;
+        string offset_str = to_string(offset).data();
+        if(send(socketfd, offset_str.data(), offset_str.length(), 0) == -1){
+            perror("LOG: couldn't send message");
+        }
+        if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
+            perror("LOG: client cannot recieve data");
+            exit(1);
+        }
+        buffer[cnt_bytes - 1] = '\0';
 
+        char* curr_word;
+        curr_word = strtok(buffer, ",");
+        while(curr_word != NULL) {
+            string curr_str = string(curr_word);
+            if(curr_str != "EOF" && curr_str != "$$") {
+                ++word_map[string(curr_word)];
+                cout << "word-" << curr_str << endl; 
+            } else{
+                read_completed = true;
+                break;
+            }
+            curr_word = strtok(NULL, ",");
+        }
 
-	// Client socket structure
-	struct sockaddr_in cliAddr;
+        printf("LOG | Iteration %d: client recieved:\"%s\"\n", itr, buffer);
+        if(!read_completed) offset += words_per_packet;
+        else break;
+    }
+    for(auto &[s, cnt]: word_map){
+        cout << s << " " << cnt << endl;
+    }
+    // count_words_and_print_output(recieved_string);
+}
 
-	// char array to store incoming message
-	char buffer[1024];
+int main() {
+    // Getting server config
+    json serverConfig = getServerConfig("config.json");
+    string ipaddr = string(serverConfig["server_ip"]);
+    string portNum = to_string(int(serverConfig["server_port"]));
+    int words_per_packet = int(serverConfig["p"]);
+    
+    int                 socketfd, cnt_bytes, recieved;
+    char                buffer[100], serveraddr[INET_ADDRSTRLEN];
+    struct addrinfo     hints, *serverinfo, *list;
 
-    // Server socket address structures
-	struct sockaddr_in serverAddr;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
 
-	// Creating socket id
-	clientSocket = socket(AF_INET,
-						SOCK_STREAM, 0);
-
-	if (clientSocket < 0) {
-		printf("Error in connection.\n");
+    if((recieved = getaddrinfo(ipaddr.data(), portNum.data(), &hints, &serverinfo)) != 0){
+        fprintf(stderr, "LOG: couldn't get address info | %s\n", gai_strerror(recieved));
+		return 2;
+    }
+    list = serverinfo;
+    if(list == NULL) {
+		perror("LOG: no responses\n");
 		exit(1);
 	}
-	printf("Client Socket is created.\n");
+    if((socketfd = socket(list->ai_family, list->ai_socktype, list->ai_protocol)) == -1){
+        perror("LOG: client couldn't create a socket");
+        return 1;
+    }
+    if(connect(socketfd, list->ai_addr, list->ai_addrlen) == -1) {
+        close(socketfd);
+        perror("LOG: client couldn't connect");
+        return 1;
+    }
 
-	// Initializing socket structure with NULL
-	memset(&cliAddr, '\0', sizeof(cliAddr));
+    inet_ntop(list->ai_family, &(((struct sockaddr_in *)list->ai_addr)->sin_addr), serveraddr, sizeof(serveraddr));
+    freeaddrinfo(serverinfo);
+    printf("LOG: successfully connected to server with ip: %s\n", serveraddr);
 
-	// Initializing buffer array with NULL
-	memset(buffer, '\0', sizeof(buffer));
+    main_client_process(socketfd, buffer, words_per_packet);
 
-	// Assigning port number and IP address
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(PORT);
+    close(socketfd);
 
-	// 127.0.0.1 is Loopback IP
-	serverAddr.sin_addr.s_addr
-		= inet_addr("127.0.0.1");
-
-	// connect() to connect to the server
-	ret = connect(clientSocket,
-				(struct sockaddr*)&serverAddr,
-				sizeof(serverAddr));
-
-	if (ret < 0) {
-		printf("Error in connection.\n");
-		exit(1);
-	}
-
-	printf("Connected to Server.\n");
-
-	map<string, int> wordFreq;
-
-	int cur = 1;
-	while(true){
-		string message = to_string(cur);
-		message+='\n';
-		int sbyteCount = send(clientSocket, message.c_str(), message.length(), 0);
-		if (sbyteCount < 0) {
-			cout << "Client send error: " <<  endl;
-			return -1;
-		}
-		else {
-			cout << "Client: Sent " << sbyteCount << " bytes" << endl;
-		}
-
-		if (sbyteCount < 0) {
-			cout << "Client send error: " << endl;
-			return -1;
-		}
-		char receiveBuffer[1024];
-
-		int rbyteCount = recv(clientSocket, receiveBuffer, 1024, 0);
-
-		receiveBuffer[rbyteCount] = '\0';
-
-		// Convert the buffer to string
-		string receivedMessage(receiveBuffer);
-		vector<string> newwords = splitMessage(receivedMessage);
-
-		if (rbyteCount < 0) {
-			cout << "Client recv error: "  << endl;
-			return 0;
-		} else {
-			cout << "Client: Received data: " << receivedMessage << endl;
-		}
-
-		bool done = false;
-		for(auto word: newwords){
-			if(word == "EOF" || word == "$$"){
-				done = true;
-				break;
-			}
-			wordFreq[word]++;
-		}
-		if(done)break;
-		cur+=k;
-	}
-
-	for(auto p: wordFreq){
-		cout<<p.first<<" "<<p.second<<endl;
-	}
-
-	return 0;
+    return 0;
 }

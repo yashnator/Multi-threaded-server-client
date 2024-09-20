@@ -1,1 +1,1 @@
-apple,orange,mango,apple,banana,orange,mango,apple,banana
+apple,orange,mango,apple,banana,orange,mango,apple,banana,EOF

@@ -1,266 +1,177 @@
-// Server side program that sends
-// a 'hi client' message
-// to every client concurrently
-
+#include <fstream>
+#include <iostream>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <unistd.h>
-#include <cstring>
-#include <fstream>
-#include <sstream>
+#include <nlohmann/json.hpp>
 
-// PORT number
-#define PORT 55555
+#define MAX_BACKLOGS    	20
+#define MAX_MESSAGE_LEN     100
 
+using namespace std;
+using json = nlohmann::json;
 
+string invalid_string = "$$";
 
-std::vector<std::string> split(const std::string& str, char delimiter) {
-    std::vector<std::string> words;
-    std::string word;
-    std::istringstream stream(str);
-
-    while (std::getline(stream, word, delimiter)) {
-        words.push_back(word);  // Add each word to the vector
-    }
-    return words;
+void sigchild_handler(int child_id){
+	int curr_error = errno;
+	while(waitpid(-1, NULL, WNOHANG) > 0);
+	errno = curr_error;
 }
 
-// Function to read words from the memory-mapped file "name.txt"
-std::vector<std::string> readWordsFromFile(const std::string& filename) {
-    std::ifstream file(filename);  // Open the file for reading
-    std::vector<std::string> words;
-
-    if (file.is_open()) {
-        std::string line;
-        while (std::getline(file, line)) {
-            // Split the line into words by comma
-            std::vector<std::string> fileWords = split(line, ',');
-            words.insert(words.end(), fileWords.begin(), fileWords.end());
-        }
-        file.close();
-    } else {
-        std::cerr << "Error opening file: " << filename << std::endl;
-    }
-
-    return words;
+json getServerConfig(string fname){
+    std::ifstream jsonConfig("config.json");
+    json serverConfig = json::parse(jsonConfig);
+    return serverConfig;
 }
 
-// Function to send words in packets of size p
-void sendWordsInPackets(int clientSocket, const std::vector<std::string>& words, int offset, int k, int p) {
-    int wordsSent = 0;  // Keep track of how many words have been sent
-
-    for (int i = offset; i < offset + k && i < words.size(); i += p) {
-        std::string packet;
-
-        // Form a packet of size p words
-		int cur = 0;
-        for (int j = 0; j < p && (i + j) < words.size() && wordsSent < k; ++j) {
-			cur++;
-            packet += words[i + j] + ",";  // Append each word followed by newline
-            wordsSent++;
-        }
-		if(cur < p && wordsSent < k){
-			packet+="EOF";
-		}
-		packet+='\n';
-		std::cout<<packet<<std::endl;
-
-        // Send the packet to the client
-        send(clientSocket, packet.c_str(), packet.length(), 0);
-    }
-
-    std::cout << "Sent " << wordsSent << " words in packets of " << p << " words." << std::endl;
+void *get_address(struct sockaddr *addr){
+	return &(((struct sockaddr_in *) addr)->sin_addr);
 }
 
-
-
-
-
-int extractOffset(const std::string& input) {
-    // Find the position of the newline character '\n'
-    size_t newlinePos = input.find('\n');
-
-    if (newlinePos != std::string::npos) {
-        // Extract the substring before '\n'
-        std::string offsetStr = input.substr(0, newlinePos);
-
-        // Convert the extracted string to an integer
-        int offset = std::stoi(offsetStr);
-
-        return offset;  // Return the integer offset
-    } else {
-        std::cerr << "Newline character not found!" << std::endl;
-        return -1;  // Return an error value
-    }
+string get_next_words(vector<string> &data_to_send, int offset, int words_per_packet) {
+	string msg = "";
+	int max_offset = min(offset + words_per_packet - 1, (int)data_to_send.size());
+	for(int i = offset - 1; i < max_offset; ++i){
+		msg = msg + data_to_send[i];
+		if(i + 1 != max_offset) msg += ",";
+	}
+	msg += "\n";
+	return msg;
 }
 
+void main_server_process(string &fname, sockaddr_storage &client_addr, char* client_address, int &socketfd, int &clientfd, int words_per_packet) {
+	std::ifstream file(fname);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open the file " << fname << std::endl;
+        exit(1);
+    }
+	string file_word;
+	vector<string> data_to_send;
+	while(getline(file, file_word, ',')) {
+		data_to_send.push_back(file_word);
+	}
+	file.close();
 
-
-
-int main()
-{
-	// Server socket id
-	int sockfd, ret;
-
-	// Server socket address structures
-	struct sockaddr_in serverAddr;
-
-	// Client socket id
-	int clientSocket;
-
-	// Client socket address structures
-	struct sockaddr_in cliAddr;
-
-	// Stores byte size of server socket address
-	socklen_t addr_size;
-
-	// Child process id
-	pid_t childpid;
-
-	// Creates a TCP socket id from IPV4 family
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
-	// Error handling if socket id is not valid
-	if (sockfd < 0) {
-		printf("Error in connection.\n");
+	// Client socket len
+	socklen_t 			sin_size;
+	int 				cnt_bytes;
+	char 				buffer[MAX_MESSAGE_LEN];
+	sin_size = sizeof(client_addr);
+	clientfd = accept(socketfd, (struct sockaddr *)&client_addr, &sin_size);
+	if(clientfd == -1) {
+		perror("LOG: couldn't accept connection");
 		exit(1);
 	}
+	inet_ntop(client_addr.ss_family, get_address((struct sockaddr *)&client_addr), client_address, sizeof(client_address));
+	printf("LOG: New client connected with ip: %s\n", client_address);
+	while(true){
+		bool send_completed = false;
 
-	printf("Server Socket is created.\n");
-
-	// Initializing address structure with NULL
-	memset(&serverAddr, '\0',
-		sizeof(serverAddr));
-
-	// Assign port number and IP address
-	// to the socket created
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(PORT);
-
-	// 127.0.0.1 is a loopback address
-	serverAddr.sin_addr.s_addr
-		= inet_addr("127.0.0.1");
-
-	// Binding the socket id with
-	// the socket structure
-	ret = bind(sockfd,
-			(struct sockaddr*)&serverAddr,
-			sizeof(serverAddr));
-
-	// Error handling
-	if (ret < 0) {
-		printf("Error in binding.\n");
-		exit(1);
-	}
-
-	// Listening for connections (upto 10)
-	if (listen(sockfd, 10) == 0) {
-		printf("Listening...\n\n");
-	}
-
-	int cnt = 0;
-	while (1) {
-
-		// Accept clients and
-		// store their information in cliAddr
-		clientSocket = accept(
-			sockfd, (struct sockaddr*)&cliAddr,
-			&addr_size);
-
-		// Error handling
-		if (clientSocket < 0) {
+		if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
+			perror("LOG: Server did not recieve data");
 			exit(1);
 		}
+		buffer[cnt_bytes] = '\0';
+		printf("LOG: server recieved an offset %s\n", buffer);
 
-		// Displaying information of
-		// connected client
-		printf("Connection accepted from %s:%d\n",
-			inet_ntoa(cliAddr.sin_addr),
-			ntohs(cliAddr.sin_port));
+		int offset = atoi(buffer);
+		cout << offset << endl;
 
-		// Print number of clients
-		// connected till now
-		printf("Clients connected: %d\n\n",
-			++cnt);
-
-		// Creates a child process
-		if ((childpid = fork()) == 0) {
-
-			// Closing the server socket id
-			close(sockfd);
-
-			// Send a confirmation message
-			// to the client
-            while(1){
-                // char receiveBuffer[200];
-                // int rbyteCount = recv(clientSocket, receiveBuffer, 200, 0);
-                // if (rbyteCount < 0) {
-                //     std::cout << "Client recv error: " << std::endl;
-                //     return 0;
-                // } else {
-                //     std::cout << "Client: Received data: " << receiveBuffer << std::endl;
-                // }
-
-                char receiveBuffer[1024];
-                ssize_t rbyteCount = recv(clientSocket, receiveBuffer, sizeof(receiveBuffer) - 1, 0);
-
-                if (rbyteCount < 0) {
-                    perror("Client recv error");
-                } else if (rbyteCount == 0) {
-                    printf("Client closed connection\n");
-					cnt--;
-					return 0;
-                } else {
-                    // receiveBuffer[rbyteCount - 2] = '\n'; // Null-terminate the received data
-                    printf("Client: Received data: %s\n", receiveBuffer);
-					std::cout<<rbyteCount<<std::endl;
-					std::string receivedMessage(receiveBuffer, rbyteCount); // Convert to std::string
-    				// std::cout << "Client: Received data: " << receivedMessage << std::endl;
-					std::cout<<"recd message: "<<receivedMessage<<std::endl;
-					int offset = extractOffset(receivedMessage);
-					if(offset == -1){
-						//error
-						// send(clientSocket, ("error").c_str(), ("error").length(), 0);
-					}
-					else{
-
-						// Assume we receive an offset and k from the client
-						// int offset = 10;  // Example: start from the 10th word
-						int k = 5;  // Example: send 15 words in total
-						int p = 4;  // Example: send 5 words per packet
-						std::string filename = "words.txt";
-						std::vector<std::string> words = readWordsFromFile(filename);
-						std::cout<<"words size:"<<words.size()<<std::endl;
-						std::cout<<"offset:"<<offset<<std::endl;
-						offset--;
-
-						 if (offset >= words.size()) {
-							// If offset is larger than the number of words, respond with a special message
-							std::string response = "$$\n";
-							send(clientSocket, response.c_str(), response.length(), 0);
-						} 
-						else {
-							// Send k words starting from offset, in packets of size p
-							sendWordsInPackets(clientSocket, words, offset, k, p);
-						}
-					}
-
-                }
-                // send(clientSocket, "received your message, thanks!", strlen("received your message, thanks!"), 0);
-            }
+		if(offset > data_to_send.size()) {
+			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
+				perror("LOG: couldn't send message");
+				send_completed = true;
+			}
+		} else{
+			string packet_payload = get_next_words(data_to_send, offset, words_per_packet);
+			if(send(clientfd, packet_payload.data(), packet_payload.length(), 0) == -1){
+				perror("LOG: couldn't send message");
+			}
+			if((int)data_to_send.size() < offset + words_per_packet){
+				send_completed = true;
+			}
+		}
+		if(send_completed){
+			close(socketfd);
+			close(clientfd);
+			break;
 		}
 	}
+}
 
-	// Close the client socket id
-	close(clientSocket);
-	return 0;
+int main() {
+    // Getting server config
+    json serverConfig = getServerConfig("config.json");
+    string ipaddr = string(serverConfig["server_ip"]);
+    string portNum = to_string(int(serverConfig["server_port"]));
+	string input_fname = string(serverConfig["input_file"]);
+	int words_per_packet = int(serverConfig["p"]);
+
+    // Server starts here
+
+	// Integer vals
+	int socketfd, clientfd, everything_OK = 1, recieved;
+
+	// Structs
+	struct addrinfo 			hints, *serverinfo, *list;
+	struct sockaddr_storage 	client_addr;
+	struct sigaction 			sa;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	// Client IPv4 address
+	char client_address[INET_ADDRSTRLEN]; // IPv4
+	
+	if((recieved = getaddrinfo(ipaddr.data(), portNum.data(), &hints, &serverinfo)) != 0) {
+		fprintf(stderr, "LOG: couldn't get address info | %s\n", gai_strerror(recieved));
+		return 2;
+	}
+	if(serverinfo == NULL){
+		perror("LOG: ssso responses\n");
+		exit(1);
+	}
+	list = serverinfo;
+	if(list == NULL) {
+		perror("LOG: no responses\n");
+		exit(1);
+	}
+	if((socketfd = socket(list->ai_family, list->ai_socktype, list->ai_protocol)) == -1) {
+		fprintf(stderr, "LOG: couldn't create socket\n");
+		exit(1);
+	}
+	if(bind(socketfd, list->ai_addr, list->ai_addrlen) == -1){
+		close(socketfd);
+		perror("LOG: couldn't bind\n");
+		exit(1);
+	}
+	freeaddrinfo(serverinfo);
+	if(listen(socketfd, MAX_BACKLOGS) == -1) {
+		perror("LOG: couldn't listen");
+		exit(1);
+	}
+
+	sa.sa_handler = sigchild_handler;
+	sa.sa_flags = SA_RESTART;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART;
+
+	if(sigaction(SIGCHLD, &sa, NULL) == -1) {
+		perror("LOG: Can't signal");
+		exit(1);
+	}
+
+	main_server_process(input_fname, client_addr, client_address, socketfd, clientfd, words_per_packet);
+
+    return 0;
 }
