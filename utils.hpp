@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <random>
 #include <chrono>
+#include <time.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -23,7 +24,7 @@ extern const std::string invalid_string;
 
 #define MAX_BACKLOGS    	    32
 #define MAX_MESSAGE_LEN         1024
-#define Taloha                  10                       
+#define Taloha                  3                     
 
 int init_server_socket(std::string ipaddr, std::string portNum);
 int init_client_socket(std::string portNum);
@@ -36,7 +37,12 @@ std::string get_next_words(std::vector<std::string> &data_to_send, int offset, i
 std::string get_ip_address(const struct sockaddr_storage* addr);
 uint16_t get_port_num(const struct sockaddr_storage* addr);
 
-inline int get_random(int n){ return (rand()%n) + 1; };
+inline int get_random(int n){ 
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(1, n);
+    return dist(gen);
+};
 inline int seconds_since_epoch() { 
     const auto clk = std::chrono::system_clock::now();
     return std::chrono::duration_cast<std::chrono::seconds>(clk.time_since_epoch()).count();
