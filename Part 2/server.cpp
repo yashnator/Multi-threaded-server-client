@@ -1,31 +1,6 @@
-#include <fstream>
-#include <iostream>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <nlohmann/json.hpp>
-
-#define MAX_BACKLOGS    	20
-#define MAX_MESSAGE_LEN     100
+#include "../utils.hpp"
 
 using namespace std;
-using json = nlohmann::json;
-
-string invalid_string = "$$";
-
-json getServerConfig(string fname){
-    std::ifstream jsonConfig("config.json");
-    json serverConfig = json::parse(jsonConfig);
-    return serverConfig;
-}
 
 string get_ip_address(const struct sockaddr_storage* addr) {
     char ip_str[INET6_ADDRSTRLEN]; 
@@ -58,16 +33,23 @@ uint16_t get_port_num(const struct sockaddr_storage* addr) {
 
 string get_next_words(vector<string> &data_to_send, int offset, int words_per_packet) {
 	string msg = "";
-	int max_offset = min(offset + words_per_packet - 1, (int)data_to_send.size());
-	for(int i = offset - 1; i < max_offset; ++i){
+	int max_offset = min(offset + words_per_packet, (int)data_to_send.size());
+	for(int i = offset; i < max_offset; ++i){
 		msg = msg + data_to_send[i];
 		if(i + 1 != max_offset) msg += ",";
+	}
+	if(max_offset == (int)data_to_send.size()){
+		msg += ",EOF";
 	}
 	msg += "\n";
 	return msg;
 }
 
-void main_server_process(string &fname, int &socketfd, int words_per_packet) {
+void main_server_process(int &socketfd) {
+	json serverConfig = getServerConfig("config.json");
+	string fname = string(serverConfig["input_file"]);
+	int words_per_packet = int(serverConfig["p"]);
+
 	std::ifstream file(fname);
     if (!file.is_open()) {
         std::cerr << "Error: Could not open the file " << fname << std::endl;
@@ -106,7 +88,7 @@ void main_server_process(string &fname, int &socketfd, int words_per_packet) {
 
 		int offset = atoi(buffer);
 
-		if(offset > data_to_send.size()) {
+		if(offset > data_to_send.size() || offset < 0) {
 			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
 				perror("LOG: couldn't send message");
 				send_completed = true;
@@ -133,10 +115,7 @@ int main() {
     json serverConfig = getServerConfig("config.json");
     string ipaddr = string(serverConfig["server_ip"]);
     string portNum = to_string(int(serverConfig["server_port"]));
-	string input_fname = string(serverConfig["input_file"]);
-	int words_per_packet = int(serverConfig["p"]);
-
-    // Server starts here
+	int num_threads = int(serverConfig["num_clients"]);
 
 	// Integer vals
 	int 						socketfd, everything_OK = 1, recieved;
@@ -174,7 +153,7 @@ int main() {
 		exit(1);
 	}
 
-	main_server_process(input_fname, socketfd, words_per_packet);
+	main_server_process(socketfd);
 
     return 0;
 }

@@ -1,43 +1,16 @@
-#include <fstream>
-#include <iostream>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <nlohmann/json.hpp>
-
-#define MAX_MESSAGE_LEN     100
+#include "../utils.hpp"
 
 using namespace std;
-using json = nlohmann::json;
 
-json getServerConfig(string fname){
-    std::ifstream jsonConfig("config.json");
-    json serverConfig = json::parse(jsonConfig);
-    return serverConfig;
-}
+struct thread_args {
+    int thread_id;
+    int sockfd;
+    int wpp;
+};
 
-void count_words_and_print_output(map<string, int> &recieved_string) {
-    ofstream file("output.txt");
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open the file for writing" << std::endl;
-        exit(1);
-    }
-    for(auto &[str, freq]: recieved_string) {
-        file << str << "," << freq << endl;
-    }
-    file.close();
-}
-
-void main_client_process(int socketfd, int words_per_packet) { 
-    int                 cnt_bytes = 0, itr = 0, offset = 1;
+void *client_thread(void* td_args) { 
+    thread_args* args = (thread_args*)td_args;
+    int                 cnt_bytes = 0, itr = 0, offset = 0, socketfd = args->sockfd, words_per_packet = args->wpp;
     char                buffer[100];
     map<string, int>    word_map;
 
@@ -48,10 +21,12 @@ void main_client_process(int socketfd, int words_per_packet) {
             perror("LOG: couldn't send message");
         }
         if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
-            perror("LOG: client cannot recieve data");
+            perror("LOG: client could not recieve data");
             exit(1);
         }
         buffer[cnt_bytes - 1] = '\0';
+
+        cout << "LOG | Client buffer: " << buffer << endl;
 
         char* curr_word;
         curr_word = strtok(buffer, ",");
@@ -66,11 +41,13 @@ void main_client_process(int socketfd, int words_per_packet) {
             curr_word = strtok(NULL, ",");
         }
 
-        printf("LOG | Iteration %d: client recieved:\"%s\"\n", itr, buffer);
+        printf("LOG | Iteration %d: client recieved new message\n", itr);
+        ++itr;
         if(!read_completed) offset += words_per_packet;
         else break;
     }
-    count_words_and_print_output(word_map);
+    count_words_and_print_output(word_map, args->thread_id);
+    pthread_exit(NULL);
 }
 
 int main() {
@@ -78,6 +55,7 @@ int main() {
     json serverConfig = getServerConfig("config.json");
     string portNum = to_string(int(serverConfig["server_port"]));
     int words_per_packet = int(serverConfig["p"]);
+    int num_threads = int(serverConfig["num_clients"]);
     
     int                 socketfd, cnt_bytes, recieved;
     char                serveraddr[INET_ADDRSTRLEN];
@@ -110,7 +88,21 @@ int main() {
     freeaddrinfo(clientinfo);
     printf("LOG: successfully connected to server with ip: %s\n", serveraddr);
 
-    main_client_process(socketfd, words_per_packet);
+    pthread_t th[num_threads];
+    for(int i = 0; i < num_threads; ++i){
+        thread_args td_args;
+        td_args.thread_id = i + 1;
+        td_args.sockfd = socketfd;
+        td_args.wpp = words_per_packet;
+        if(pthread_create(&th[i], NULL, &client_thread, (void *)&td_args) != 0){
+            perror("LOG: Couldn't create thread");
+        }
+    }
+    for(int i = 0; i < num_threads; ++i){
+        if(pthread_join(th[i], NULL) != 0){
+            perror("LOG: Couldn't close thread");
+        }
+    }
 
     close(socketfd);
 
