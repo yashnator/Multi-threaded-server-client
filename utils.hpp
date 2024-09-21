@@ -7,6 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <random>
+#include <chrono>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -17,28 +19,27 @@
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
-
-std::string invalid_string = "$$";
+extern const std::string invalid_string;
 
 #define MAX_BACKLOGS    	    32
 #define MAX_MESSAGE_LEN         1024
+#define Taloha                  10                       
 
-json getServerConfig(std::string fname){
-    std::ifstream jsonConfig("config.json");
-    json serverConfig = json::parse(jsonConfig);
-    return serverConfig;
-}
+int init_server_socket(std::string ipaddr, std::string portNum);
+int init_client_socket(std::string portNum);
 
-void count_words_and_print_output(std::map<std::string, int> &recieved_string, int suffix_int) {
-    std::ofstream file("output_" + std::to_string(suffix_int) + ".txt");
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open the file for writing" << std::endl;
-        exit(1);
-    }
-    for(auto &[str, freq]: recieved_string) {
-        file << str << "," << freq << std::endl;
-    }
-    file.close();
+json getServerConfig(std::string fname);
+
+void count_words_and_print_output(std::map<std::string, int> &recieved_string, int suffix_int);
+std::string get_next_words(std::vector<std::string> &data_to_send, int offset, int words_per_packet);
+
+std::string get_ip_address(const struct sockaddr_storage* addr);
+uint16_t get_port_num(const struct sockaddr_storage* addr);
+
+inline int get_random(int n){ return (rand()%n) + 1; };
+inline int seconds_since_epoch() { 
+    const auto clk = std::chrono::system_clock::now();
+    return std::chrono::duration_cast<std::chrono::seconds>(clk.time_since_epoch()).count();
 }
 
 #endif

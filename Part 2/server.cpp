@@ -2,53 +2,18 @@
 
 using namespace std;
 
-string get_ip_address(const struct sockaddr_storage* addr) {
-    char ip_str[INET6_ADDRSTRLEN]; 
-    if (addr->ss_family == AF_INET) {
-        struct sockaddr_in* ipv4 = (struct sockaddr_in*)addr;
-		inet_ntop(AF_INET, &(ipv4->sin_addr), ip_str, sizeof(ip_str));
-    } else if (addr->ss_family == AF_INET6) {
-        struct sockaddr_in6* ipv6 = (struct sockaddr_in6*)addr;
-        inet_ntop(AF_INET6, &(ipv6->sin6_addr), ip_str, sizeof(ip_str));
-    } else {
-        return "Unknown family";
-    }
-	string ip_adr = string(ip_str);
-    return ip_adr; 
-}
+struct thread_args {
+    int thread_id;
+	int sockfd;
+};
 
-uint16_t get_port_num(const struct sockaddr_storage* addr) {
-    uint16_t port;
-    if (addr->ss_family == AF_INET) {
-		struct sockaddr_in* ipv4 = (struct sockaddr_in*)addr;
-        port = htons(ipv4->sin_port);
-    } else if (addr->ss_family == AF_INET6) {
-		struct sockaddr_in6* ipv6 = (struct sockaddr_in6*)addr;
-        port = htons(ipv6->sin6_port);
-    } else {
-        return -1;
-    }
-	return port;
-}
-
-string get_next_words(vector<string> &data_to_send, int offset, int words_per_packet) {
-	string msg = "";
-	int max_offset = min(offset + words_per_packet, (int)data_to_send.size());
-	for(int i = offset; i < max_offset; ++i){
-		msg = msg + data_to_send[i];
-		if(i + 1 != max_offset) msg += ",";
-	}
-	if(max_offset == (int)data_to_send.size()){
-		msg += ",EOF";
-	}
-	msg += "\n";
-	return msg;
-}
-
-void main_server_process(int &socketfd) {
+void *server_thread(void* td_args) {
 	json serverConfig = getServerConfig("config.json");
 	string fname = string(serverConfig["input_file"]);
 	int words_per_packet = int(serverConfig["p"]);
+
+	thread_args* args = (thread_args*)td_args;
+	int socketfd = args->sockfd;
 
 	std::ifstream file(fname);
     if (!file.is_open()) {
@@ -103,11 +68,12 @@ void main_server_process(int &socketfd) {
 			}
 		}
 		if(send_completed){
-			close(socketfd);
 			close(clientfd);
 			break;
 		}
 	}
+	close(socketfd);
+	pthread_exit(NULL);
 }
 
 int main() {
@@ -117,43 +83,20 @@ int main() {
     string portNum = to_string(int(serverConfig["server_port"]));
 	int num_threads = int(serverConfig["num_clients"]);
 
-	// Integer vals
-	int 						socketfd, everything_OK = 1, recieved;
-	struct addrinfo 			hints, *serverinfo, *list;
+	int socketfd = init_server_socket(ipaddr, portNum);
 
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_INET;
-	hints.ai_socktype = SOCK_STREAM;
-	
-	if((recieved = getaddrinfo(ipaddr.data(), portNum.data(), &hints, &serverinfo)) != 0) {
-		fprintf(stderr, "LOG: couldn't get address info | %s\n", gai_strerror(recieved));
-		return 2;
-	}
-	if(serverinfo == NULL){
-		perror("LOG: ssso responses\n");
-		exit(1);
-	}
-	list = serverinfo;
-	if(list == NULL) {
-		perror("LOG: no responses\n");
-		exit(1);
-	}
-	if((socketfd = socket(list->ai_family, list->ai_socktype, list->ai_protocol)) == -1) {
-		fprintf(stderr, "LOG: couldn't create socket\n");
-		exit(1);
-	}
-	if(bind(socketfd, list->ai_addr, list->ai_addrlen) == -1){
-		close(socketfd);
-		perror("LOG: couldn't bind\n");
-		exit(1);
-	}
-	freeaddrinfo(serverinfo);
-	if(listen(socketfd, MAX_BACKLOGS) == -1) {
-		perror("LOG: couldn't listen");
-		exit(1);
-	}
-
-	main_server_process(socketfd);
+	pthread_t th[num_threads];
+	for(int i = 0; i < num_threads; ++i){
+        thread_args td_args{i, socketfd};
+        if(pthread_create(&th[i], NULL, &server_thread, (void *)&td_args) != 0){
+            perror("LOG: Couldn't create thread");
+        }
+    }
+    for(int i = 0; i < num_threads; ++i){
+        if(pthread_join(th[i], NULL) != 0){
+            perror("LOG: Couldn't close thread");
+        }
+    }
 
     return 0;
 }
