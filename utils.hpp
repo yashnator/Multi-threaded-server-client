@@ -23,14 +23,18 @@
 using json = nlohmann::json;
 extern const std::string invalid_string;
 extern const std::string grumpy_string;
+extern const std::string busy_ask;
+extern const std::string idle_reply;
+extern const std::string busy_reply;
 
 #define MAX_BACKLOGS    	    32
 #define MAX_MESSAGE_LEN         1024
-#define Taloha                  20     
+#define Taloha                  10     
 
 const auto start_time = std::chrono::system_clock::now();
 const auto origin_time = std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count();
 
+void wait_for_millisec(int num_millisec);
 void wait_for_next_slot(int curr_time, int last_time);
 
 int init_server_socket(std::string ipaddr, std::string portNum);

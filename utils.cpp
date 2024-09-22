@@ -1,16 +1,23 @@
 #include "utils.hpp"
 
 const std::string invalid_string = "$$";
-const std::string grumpy_string = "HUH\n";
+const std::string grumpy_string = "HUH!\n";
+const std::string busy_ask = "BUSY?\n";
+const std::string idle_reply = "IDLE\n";
+const std::string busy_reply = "BUSY\n";
+
+void wait_for_millisec(int num_millisec){
+    using namespace std::this_thread;
+    using std::chrono::system_clock;
+    sleep_for(std::chrono::milliseconds(num_millisec));
+}
 
 void wait_for_next_slot(int curr_time, int last_time) {
     int nextslot = last_time / Taloha;
     ++nextslot;
     nextslot *= Taloha;
     if(nextslot - curr_time > 0) {
-        using namespace std::this_thread;
-        using std::chrono::system_clock;
-        sleep_for(std::chrono::milliseconds(nextslot - curr_time));
+        wait_for_millisec(nextslot - curr_time);
     }
 }
 
