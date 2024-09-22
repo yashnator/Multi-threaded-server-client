@@ -1,45 +1,24 @@
-#include <fstream>
-#include <iostream>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <nlohmann/json.hpp>
-
-#define MAX_MESSAGE_LEN     100
+#include "../utils.hpp"
 
 using namespace std;
-using json = nlohmann::json;
 
-json getServerConfig(string fname){
-    std::ifstream jsonConfig("config.json");
-    json serverConfig = json::parse(jsonConfig);
-    return serverConfig;
-}
+struct thread_args {
+    int thread_id;
+    int wpp;
+};
 
-void count_words_and_print_output(map<string, int> &recieved_string) {
-    ofstream file("output.txt");
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open the file for writing" << std::endl;
-        exit(1);
-    }
-    for(auto &[str, freq]: recieved_string) {
-        file << str << "," << freq << endl;
-    }
-    file.close();
-}
+void *client_thread(void* td_args) { 
+    json serverConfig = getServerConfig("config.json");
+    string portNum = to_string(int(serverConfig["server_port"]));
+    auto start = std::chrono::high_resolution_clock::now();
 
-void main_client_process(int socketfd, int words_per_packet) { 
-    int                 cnt_bytes = 0, itr = 0, offset = 1;
-    char                buffer[100];
+
+    thread_args* args = static_cast<thread_args*>(td_args);
+    int                 socketfd, cnt_bytes, itr = 0, offset = 0, words_per_packet = args->wpp;;
+    char                buffer[MAX_MESSAGE_LEN];;        
     map<string, int>    word_map;
+
+    socketfd = init_client_socket(portNum);
 
     while(true){
         bool read_completed = false;
@@ -48,10 +27,12 @@ void main_client_process(int socketfd, int words_per_packet) {
             perror("LOG: couldn't send message");
         }
         if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
-            perror("LOG: client cannot recieve data");
+            perror("LOG: client could not recieve data");
             exit(1);
         }
         buffer[cnt_bytes - 1] = '\0';
+
+        cout << "LOG | Client buffer: " << buffer << endl;
 
         char* curr_word;
         curr_word = strtok(buffer, ",");
@@ -66,53 +47,52 @@ void main_client_process(int socketfd, int words_per_packet) {
             curr_word = strtok(NULL, ",");
         }
 
-        printf("LOG | Iteration %d: client recieved:\"%s\"\n", itr, buffer);
+        printf("LOG | Iteration %d: client recieved new message\n", itr);
+        ++itr;
         if(!read_completed) offset += words_per_packet;
         else break;
     }
-    count_words_and_print_output(word_map);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    chrono::duration<double> diff = end - start;
+    double completion_time = diff.count();
+    cout << "Completion time: " << completion_time << " seconds" << endl;
+
+    string str_to_write = to_string(completion_time) + " ";
+
+    std::ofstream outfile;
+    outfile.open("stats.txt", ios_base::app);
+    cout<<"comp time: "<<completion_time<<endl;
+    if (outfile.is_open()) {
+        outfile << str_to_write;
+        outfile.close();
+    } else {
+        std::cerr << "Error: Could not open stats.txt file." << endl;
+    }
+
+    close(socketfd);
+    count_words_and_print_output(word_map, args->thread_id);
+
+    pthread_exit(NULL);
 }
 
 int main() {
     // Getting server config
     json serverConfig = getServerConfig("config.json");
-    string portNum = to_string(int(serverConfig["server_port"]));
     int words_per_packet = int(serverConfig["p"]);
-    
-    int                 socketfd, cnt_bytes, recieved;
-    char                serveraddr[INET_ADDRSTRLEN];
-    struct addrinfo     hints, *clientinfo, *list;
+    int num_threads = int(serverConfig["num_clients"]);
 
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if((recieved = getaddrinfo("localhost", portNum.data(), &hints, &clientinfo)) != 0){
-        fprintf(stderr, "LOG: couldn't get address info | %s\n", gai_strerror(recieved));
-		return 2;
+    pthread_t th[num_threads];
+    for(int i = 0; i < num_threads; ++i){
+        if(pthread_create(&th[i], NULL, &client_thread, new thread_args{i + 1, words_per_packet}) != 0){
+            perror("LOG: Couldn't create thread");
+        }
     }
-    list = clientinfo;
-    if(list == NULL) {
-		perror("LOG: no responses\n");
-		exit(1);
-	}
-    if((socketfd = socket(list->ai_family, list->ai_socktype, list->ai_protocol)) == -1){
-        perror("LOG: client couldn't create a socket");
-        return 1;
+    for(int i = 0; i < num_threads; ++i){
+        if(pthread_join(th[i], NULL) != 0){
+            perror("LOG: Couldn't close thread");
+        }
     }
-    if(connect(socketfd, list->ai_addr, list->ai_addrlen) == -1) {
-        close(socketfd);
-        perror("LOG: client couldn't connect");
-        return 1;
-    }
-
-    inet_ntop(list->ai_family, &(((struct sockaddr_in *)list->ai_addr)->sin_addr), serveraddr, sizeof(serveraddr));
-    freeaddrinfo(clientinfo);
-    printf("LOG: successfully connected to server with ip: %s\n", serveraddr);
-
-    main_client_process(socketfd, words_per_packet);
-
-    close(socketfd);
 
     return 0;
 }
