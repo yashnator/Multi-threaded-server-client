@@ -27,6 +27,8 @@ int init_server_socket(std::string ipaddr, std::string portNum) {
 		fprintf(stderr, "LOG: couldn't create socket\n");
 		exit(1);
 	}
+    int yes = 1;
+    setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 	if(bind(socketfd, list->ai_addr, list->ai_addrlen) == -1){
 		close(socketfd);
 		perror("LOG: couldn't bind\n");

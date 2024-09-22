@@ -8,10 +8,45 @@ struct thread_args {
 	int sockfd;
 };
 
-// struct server_stats {
-// 	std::atomic<bool> is_busy;
-	
-// }
+struct server_stats {
+	atomic<bool> is_busy;
+	atomic<int> currently_serving;
+	atomic<int> last_time_served;
+
+	server_stats(): is_busy(false), currently_serving(-1), last_time_served(-1) { }
+};
+
+struct server_stats* shared_stats; // Static initialization fiasco?
+
+bool check_collision(int sockid, int sock_start_time) {
+	int prev_max;
+	do {
+		prev_max = shared_stats->last_time_served;
+	} while(prev_max < !(shared_stats->last_time_served.compare_exchange_strong(prev_max, sock_start_time)));
+	if(shared_stats->is_busy){
+		if(shared_stats->currently_serving == sockid){
+			if(shared_stats->last_time_served > sock_start_time) {
+				cout << "Collision hogaya guru" << endl;
+				shared_stats->is_busy = false;
+				return false;
+			} else{
+				return true;
+			}
+		} else{
+			cout << "Collision hogaya guru" << endl;
+			return false;
+		}
+	} else{
+		bool expecting = false, desired = true;
+		if(shared_stats->is_busy.compare_exchange_strong(expecting, desired)){
+			// I am using this slot!
+			shared_stats->currently_serving = sockid;
+			return true;
+		} else{
+			return false;
+		}
+	}
+}
 
 void *server_thread(void* td_args) {
 	json serverConfig = getServerConfig("config.json");
@@ -89,6 +124,8 @@ int main() {
 	int num_threads = int(serverConfig["num_clients"]);
 
 	int socketfd = init_server_socket(ipaddr, portNum);
+
+	shared_stats = new server_stats();
 
 	pthread_t th[num_threads];
 	for(int i = 0; i < num_threads; ++i){

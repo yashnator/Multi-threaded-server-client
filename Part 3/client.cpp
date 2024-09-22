@@ -6,6 +6,13 @@ struct thread_args {
     int thread_id;
 };
 
+void wait_for_next_slot(int curr_time, int last_time) {
+    int nextslot = last_time / Taloha;
+    ++nextslot;
+    nextslot *= Taloha;
+    if(nextslot - curr_time > 0) sleep(nextslot - curr_time);
+}
+
 void *client_thread(void* td_args) { 
     json serverConfig = getServerConfig("config.json");
     string portNum = to_string(int(serverConfig["server_port"]));
@@ -14,23 +21,23 @@ void *client_thread(void* td_args) {
 
     thread_args* args = static_cast<thread_args*>(td_args);
     int                 socketfd, cnt_bytes, curr_id = args->thread_id;
-    int                 itr = 0, offset = 0, start_time = seconds_since_epoch() / Taloha;
+    int                 itr = 0, offset = 0, start_time = seconds_since_epoch();
     int                 last_time = start_time - 1;
     char                buffer[MAX_MESSAGE_LEN];;        
-    map<string, int>    word_map;
+    map<string, int>    word_map, curr_map;
 
     socketfd = init_client_socket(portNum);
     cout << "id " << curr_id << endl;
 
     while(true){
         bool read_completed = false, successful_slot = true;
-        int curr_time = seconds_since_epoch() / Taloha;
-        while(last_time == curr_time) curr_time = seconds_since_epoch() / Taloha;
+        int curr_time = seconds_since_epoch();
+        if((last_time / Taloha) == (curr_time / Taloha)) wait_for_next_slot(curr_time, last_time); // If in same slot as last one, wait for next slot
         int rndnum = get_random(num_threads);
         while(rndnum != curr_id){
-            last_time = curr_time;
-            cout << "LOG | Client " << curr_id << " Didn't send in slot " << curr_time - start_time << " " << rndnum << endl;
-            while(last_time == curr_time) curr_time = seconds_since_epoch() / Taloha;
+            curr_time = seconds_since_epoch();
+            cout << "LOG | Client " << curr_id << " Didn't send in slot " << (curr_time - start_time) /Taloha << endl; 
+            wait_for_next_slot(curr_time, curr_time); // Go to next slot
             rndnum = get_random(num_threads);
         }
         last_time = curr_time;
@@ -55,7 +62,7 @@ void *client_thread(void* td_args) {
                 break;
             }
             if(curr_str != "EOF" && curr_str != "$$") {
-                ++word_map[string(curr_word)];
+                ++curr_map[string(curr_word)];
             } else{
                 read_completed = true;
                 break;
@@ -63,15 +70,18 @@ void *client_thread(void* td_args) {
             curr_word = strtok(NULL, ",");
         }
 
-        printf("LOG | Client %d | Iteration %d: client recieved new message\n", args->thread_id, itr);
+        if(successful_slot) printf("LOG | Client %d | Iteration %d: client recieved new message\n", args->thread_id, itr);
+
         ++itr;
         if(read_completed) break;
-        else if(successful_slot) offset += words_per_packet;
-        else continue;
+        else if(successful_slot) {
+            for(auto [s, cnt]: curr_map) word_map[s] += cnt;
+            offset += words_per_packet;
+        }
+        curr_map.clear();
     }
     close(socketfd);
     free(td_args);
-    free(args);
     count_words_and_print_output(word_map, curr_id);
     pthread_exit(NULL);
 }

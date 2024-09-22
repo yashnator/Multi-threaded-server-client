@@ -24,7 +24,10 @@ extern const std::string invalid_string;
 
 #define MAX_BACKLOGS    	    32
 #define MAX_MESSAGE_LEN         1024
-#define Taloha                  3                     
+#define Taloha                  10       
+
+const auto start_time = std::chrono::system_clock::now();
+const auto origin_time = std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count();
 
 int init_server_socket(std::string ipaddr, std::string portNum);
 int init_client_socket(std::string portNum);
@@ -44,8 +47,11 @@ inline int get_random(int n){
     return dist(gen);
 };
 inline int seconds_since_epoch() { 
-    const auto clk = std::chrono::system_clock::now();
-    return std::chrono::duration_cast<std::chrono::seconds>(clk.time_since_epoch()).count();
+    auto curr = std::chrono::system_clock::now();
+    auto curr_time = std::chrono::duration_cast<std::chrono::milliseconds>(curr.time_since_epoch()).count();
+    curr_time -= origin_time;
+    int ans = curr_time;
+    return ans;
 }
 
 #endif
