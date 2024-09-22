@@ -32,24 +32,29 @@ void *client_thread(void* td_args) {
         while(rndnum != curr_id){
             curr_time = seconds_since_epoch();
             // cout << "LOG | Client " << curr_id << " Didn't send in slot " << (curr_time - start_time) /Taloha << endl; 
-            int i = get_random(min((1 << backoff_counter) - 1, 30));
-            wait_for_millisec(i * Taloha);
+            if(backoff_counter > 0) {
+                int bkrnd = get_random(min((1 << backoff_counter) - 1, 30));
+                cout << "Back off for " << bkrnd * Taloha << " " << backoff_counter << " " << bkrnd << endl;
+                wait_for_millisec(bkrnd * Taloha);
+            }
             wait_for_next_slot(curr_time, curr_time); // Go to next slot
             rndnum = get_random(num_threads);
         }
         last_time = curr_time;
         // cout << "########## Client " << curr_id << " stopped waiting" << endl;
-        string offset_str = to_string(offset).data();
+        string offset_str = (to_string(offset) + "\n").data();
         if(send(socketfd, offset_str.data(), offset_str.length(), 0) == -1){
+            cerr << curr_id << "currod" << endl;
             perror("LOG: couldn't send message");
         }
+        cout << curr_id <<  " Sent offset " << offset_str << endl;
         if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
             perror("LOG: client could not recieve data");
             exit(1);
         }
-        buffer[cnt_bytes - 1] = '\0';
+        if(cnt_bytes <= 0) break;
 
-        if(cnt_bytes == 0) break;
+        buffer[cnt_bytes - 1] = '\0';
 
         cout << "LOG | Client " << args->thread_id << " buffer: " << buffer << endl;
 
@@ -57,12 +62,13 @@ void *client_thread(void* td_args) {
         curr_word = strtok(buffer, ",");
         while(curr_word != NULL) {
             string curr_str = string(curr_word);
-            if(curr_str == "HUH"){
+            if(curr_str == "HUH!"){
                 successful_slot = false;
                 ++backoff_counter;
                 break;
             }
             if(curr_str != "EOF" && curr_str != "$$") {
+                string p = string(curr_word);
                 ++curr_map[string(curr_word)];
             } else{
                 read_completed = true;

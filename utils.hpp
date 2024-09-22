@@ -29,7 +29,7 @@ extern const std::string busy_reply;
 
 #define MAX_BACKLOGS    	    32
 #define MAX_MESSAGE_LEN         1024
-#define Taloha                  10     
+#define Taloha                  20     
 
 const auto start_time = std::chrono::system_clock::now();
 const auto origin_time = std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count();

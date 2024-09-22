@@ -1,6 +1,6 @@
 #include "utils.hpp"
 
-const std::string invalid_string = "$$";
+const std::string invalid_string = "$$\n";
 const std::string grumpy_string = "HUH!\n";
 const std::string busy_ask = "BUSY?\n";
 const std::string idle_reply = "IDLE\n";
@@ -105,11 +105,7 @@ json getServerConfig(std::string fname){
 
 void count_words_and_print_output(std::map<std::string, int> &recieved_string, int suffix_int) {
     std::ofstream file("output_" + std::to_string(suffix_int) + ".txt");
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open the file for writing" << std::endl;
-        exit(1);
-    }
-    for(auto &[str, freq]: recieved_string) {
+    for(auto [str, freq]: recieved_string) {
         file << str << "," << freq << std::endl;
     }
     file.close();
