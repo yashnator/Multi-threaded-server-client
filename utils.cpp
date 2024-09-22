@@ -1,6 +1,18 @@
 #include "utils.hpp"
 
 const std::string invalid_string = "$$";
+const std::string grumpy_string = "HUH\n";
+
+void wait_for_next_slot(int curr_time, int last_time) {
+    int nextslot = last_time / Taloha;
+    ++nextslot;
+    nextslot *= Taloha;
+    if(nextslot - curr_time > 0) {
+        using namespace std::this_thread;
+        using std::chrono::system_clock;
+        sleep_for(std::chrono::milliseconds(nextslot - curr_time));
+    }
+}
 
 int init_server_socket(std::string ipaddr, std::string portNum) {
 	int 						socketfd, everything_OK = 1, recieved;
