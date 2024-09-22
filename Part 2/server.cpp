@@ -48,6 +48,8 @@ void *server_thread(void* td_args) {
 			perror("LOG: Server did not recieve data");
 			exit(1);
 		}
+
+		if(cnt_bytes == 0)break;
 		buffer[cnt_bytes] = '\0';
 		printf("LOG: server recieved an offset %s\n", buffer);
 

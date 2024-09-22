@@ -10,6 +10,8 @@ struct thread_args {
 void *client_thread(void* td_args) { 
     json serverConfig = getServerConfig("config.json");
     string portNum = to_string(int(serverConfig["server_port"]));
+    auto start = std::chrono::high_resolution_clock::now();
+
 
     thread_args* args = static_cast<thread_args*>(td_args);
     int                 socketfd, cnt_bytes, itr = 0, offset = 0, words_per_packet = args->wpp;;
@@ -50,8 +52,27 @@ void *client_thread(void* td_args) {
         if(!read_completed) offset += words_per_packet;
         else break;
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    chrono::duration<double> diff = end - start;
+    double completion_time = diff.count();
+    cout << "Completion time: " << completion_time << " seconds" << endl;
+
+    string str_to_write = to_string(completion_time) + " ";
+
+    std::ofstream outfile;
+    outfile.open("stats.txt", ios_base::app);
+    cout<<"comp time: "<<completion_time<<"endl";
+    if (outfile.is_open()) {
+        outfile << str_to_write;
+        outfile.close();
+    } else {
+        std::cerr << "Error: Could not open stats.txt file." << endl;
+    }
+
     close(socketfd);
     count_words_and_print_output(word_map, args->thread_id);
+
     pthread_exit(NULL);
 }
 
