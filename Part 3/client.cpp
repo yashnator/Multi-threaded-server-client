@@ -48,6 +48,8 @@ void *client_thread(void* td_args) {
         }
         buffer[cnt_bytes - 1] = '\0';
 
+        if(cnt_bytes == 0) break;
+
         // cout << "LOG | Client " << args->thread_id << " buffer: " << buffer << endl;
 
         char* curr_word;

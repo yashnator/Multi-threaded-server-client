@@ -53,7 +53,6 @@ bool check_collision(int sockid, int sock_start_time) {
 
 bool send_aloha(int sockfd, int tsp) {
 	if(check_collision(sockfd, tsp)) return true;
-	// cout << "Sending huh: Busy " << shared_stats->is_busy << " | Serving " << shared_stats->currently_serving << " | " << shared_stats->last_time_served << " | tsp " << tsp << " | sock " << sockfd << endl; 
 	send(sockfd, grumpy_string.data(), grumpy_string.length(), 0);
 	return false;
 }
