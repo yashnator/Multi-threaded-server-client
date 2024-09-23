@@ -20,7 +20,7 @@ void *client_thread(void* td_args) {
 
     while(true){
         bool read_completed = false;
-        string offset_str = to_string(offset).data();
+        string offset_str = to_string(offset) + "\n";
         if(send(socketfd, offset_str.data(), offset_str.length(), 0) == -1){
             perror("LOG: couldn't send message");
         }
@@ -28,12 +28,8 @@ void *client_thread(void* td_args) {
             perror("LOG: client could not recieve data");
             exit(1);
         }
-        buffer[cnt_bytes - 1] = '\0';
-
         if(cnt_bytes == 0) break;
-
-        cout << "LOG | Client buffer: " << buffer << endl;
-
+        buffer[cnt_bytes - 1] = '\0';
         char* curr_word;
         curr_word = strtok(buffer, ",");
         while(curr_word != NULL) {
@@ -46,8 +42,6 @@ void *client_thread(void* td_args) {
             }
             curr_word = strtok(NULL, ",");
         }
-
-        printf("LOG | Iteration %d: client recieved new message\n", itr);
         ++itr;
         if(!read_completed) offset += words_per_packet;
         else break;

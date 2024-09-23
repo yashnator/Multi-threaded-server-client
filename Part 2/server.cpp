@@ -43,17 +43,16 @@ void *server_thread(void* td_args) {
 	cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
 	while(true){
 		bool send_completed = false;
-
 		if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
 			perror("LOG: Server did not recieve data");
 			exit(1);
 		}
-		buffer[cnt_bytes] = '\0';
-		printf("LOG: server recieved an offset %s\n", buffer);
+		if(cnt_bytes <= 0) break;
+		buffer[cnt_bytes - 1] = '\0';
 
 		int offset = atoi(buffer);
 
-		if(offset > data_to_send.size() || offset < 0) {
+		if(offset >= data_to_send.size() || offset < 0) {
 			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
 				perror("LOG: couldn't send message");
 				send_completed = true;
@@ -63,7 +62,7 @@ void *server_thread(void* td_args) {
 			if(send(clientfd, packet_payload.data(), packet_payload.length(), 0) == -1){
 				perror("LOG: couldn't send message");
 			}
-			if((int)data_to_send.size() < offset + words_per_packet){
+			if((int)data_to_send.size() <= offset + words_per_packet){
 				send_completed = true;
 			}
 		}
@@ -72,7 +71,6 @@ void *server_thread(void* td_args) {
 			break;
 		}
 	}
-	close(socketfd);
 	pthread_exit(NULL);
 }
 
@@ -97,6 +95,8 @@ int main() {
             perror("LOG: Couldn't close thread");
         }
     }
+
+	close(socketfd);
 
     return 0;
 }
