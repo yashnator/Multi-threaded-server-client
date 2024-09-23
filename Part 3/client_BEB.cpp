@@ -26,38 +26,30 @@ void *client_thread(void* td_args) {
         bool read_completed = false, successful_slot = true;
         int curr_time = seconds_since_epoch();
         if((last_time / Taloha) == (curr_time / Taloha)) {
-            wait_for_next_slot(curr_time, last_time); // If in same slot as last one, wait for next slot
+            wait_for_next_slot(curr_time, last_time);
         }
         int rndnum = get_random(num_threads);
         while(rndnum != curr_id){
             curr_time = seconds_since_epoch();
-            // cout << "LOG | Client " << curr_id << " Didn't send in slot " << (curr_time - start_time) /Taloha << endl; 
             if(backoff_counter > 0) {
                 int bkrnd = get_random(min((1 << backoff_counter) - 1, 30));
-                cout << "Back off for " << bkrnd * Taloha << " " << backoff_counter << " " << bkrnd << endl;
                 wait_for_millisec(bkrnd * Taloha);
             }
-            wait_for_next_slot(curr_time, curr_time); // Go to next slot
+            wait_for_next_slot(curr_time, curr_time); 
             rndnum = get_random(num_threads);
         }
         last_time = curr_time;
-        // cout << "########## Client " << curr_id << " stopped waiting" << endl;
         string offset_str = (to_string(offset) + "\n").data();
         if(send(socketfd, offset_str.data(), offset_str.length(), 0) == -1){
             cerr << curr_id << "currod" << endl;
             perror("LOG: couldn't send message");
         }
-        cout << curr_id <<  " Sent offset " << offset_str << endl;
         if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
             perror("LOG: client could not recieve data");
             exit(1);
         }
         if(cnt_bytes <= 0) break;
-
         buffer[cnt_bytes - 1] = '\0';
-
-        cout << "LOG | Client " << args->thread_id << " buffer: " << buffer << endl;
-
         char* curr_word;
         curr_word = strtok(buffer, ",");
         while(curr_word != NULL) {
@@ -76,9 +68,6 @@ void *client_thread(void* td_args) {
             }
             curr_word = strtok(NULL, ",");
         }
-
-        if(successful_slot) printf("LOG | Client %d | Iteration %d | Offset: client recieved new message\n", args->thread_id, itr, offset);
-
         ++itr;
         if(read_completed) {
             cout << "Client " << curr_id << " completed" << endl;

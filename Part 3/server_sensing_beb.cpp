@@ -90,7 +90,7 @@ void *server_thread(void* td_args) {
 		perror("LOG: couldn't accept connection");
 		exit(1);
 	}
-	cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
+	// cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
 	while(true){
 		bool send_completed = false;
         
@@ -101,7 +101,6 @@ void *server_thread(void* td_args) {
 		}
         if(cnt_bytes <= 0) break;
         buffer[cnt_bytes] = '\0';
-        cout << "Server got " << string(buffer) << endl;
         if(string(buffer) == busy_ask){
             if(shared_stats->is_busy){
                 if(send(clientfd, busy_reply.data(), busy_reply.length(), 0) == -1){
@@ -115,6 +114,7 @@ void *server_thread(void* td_args) {
             }
         } else{
             cout << "Weird command "<<  string(buffer) << endl;
+			break;
         }
         // Sensing part ends
 
@@ -127,11 +127,7 @@ void *server_thread(void* td_args) {
 		}
 		if(cnt_bytes <= 0) break;
 		buffer[cnt_bytes - 1] = '\0';
-		// if(!send_aloha(clientfd, tsp)) continue;
-		// printf("LOG: server recieved an offset %s from the client at PORT: %d", buffer, to_string(get_port_num(&client_addr)));
-
 		int offset = atoi(buffer);
-
 		if(offset > data_to_send.size() || offset < 0) {
 			if(!send_aloha(clientfd, tsp)) continue;
 			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
