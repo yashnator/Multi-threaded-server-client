@@ -28,7 +28,7 @@ bool check_collision(int sockid, int sock_start_time) {
 		if(shared_stats->currently_serving == sockid){
 			if(shared_stats->last_time_served > sock_start_time) {
 				// cout << "Collision hogaya guru time se" << endl;
-				shared_stats->is_busy = false;
+				// shared_stats->is_busy = false;
 				return false;
 			} else{
 				// cout << "Crow crow" << endl;
@@ -51,16 +51,21 @@ bool check_collision(int sockid, int sock_start_time) {
 	}
 }
 
+void send_huh(int socketfd) {
+	send(socketfd, grumpy_string.data(), grumpy_string.length(), 0);
+}
+
 bool send_aloha(int sockfd, int tsp) {
 	if(check_collision(sockfd, tsp)) return true;
-	send(sockfd, grumpy_string.data(), grumpy_string.length(), 0);
+	send_huh(sockfd);
 	return false;
 }
 
 void *server_thread(void* td_args) {
 	json serverConfig = getServerConfig("config.json");
 	string fname = string(serverConfig["input_file"]);
-	int words_per_packet = int(serverConfig["p"]);
+	int p = int(serverConfig["p"]);
+	int k = int(serverConfig["k"]);
 
 	thread_args* args = (thread_args*)td_args;
 	int socketfd = args->sockfd;
@@ -90,68 +95,94 @@ void *server_thread(void* td_args) {
 		perror("LOG: couldn't accept connection");
 		exit(1);
 	}
-	// cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
+	cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
 	while(true){
-		bool send_completed = false;
-        
-        // Sensing part starts
-        if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
-			perror("LOG: Server did not recieve data");
-			exit(1);
-		}
-        if(cnt_bytes <= 0) break;
-        buffer[cnt_bytes] = '\0';
-        if(string(buffer) == busy_ask){
-            if(shared_stats->is_busy){
-                if(send(clientfd, busy_reply.data(), busy_reply.length(), 0) == -1){
-                    perror("LOG: couldn't send message");
-                }
-                continue;
-            } else{
-                if(send(clientfd, idle_reply.data(), idle_reply.length(), 0) == -1){
-                    perror("LOG: couldn't send message");
-                }
-            }
-        } else{
-            cout << "Weird command "<<  string(buffer) << endl;
-			break;
-        }
-        // Sensing part ends
-
 		int tsp = seconds_since_epoch();
+		if(((shared_stats->last_time_served / Taloha) != (tsp / Taloha))){
+			int prev_max;
+			do {
+				prev_max = shared_stats->last_time_served;
+			} while(prev_max < !(shared_stats->last_time_served.compare_exchange_strong(prev_max, tsp)));
+			shared_stats->is_busy = false;
+		}
 
-		// if(!send_aloha(clientfd, tsp)) continue;
 		if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
 			perror("LOG: Server did not recieve data");
 			exit(1);
 		}
 		if(cnt_bytes <= 0) break;
-		buffer[cnt_bytes - 1] = '\0';
+		buffer[cnt_bytes] = '\0';
+		string client_query = string(buffer);
+		cout << client_query << endl;
+		if(client_query == busy_ask){
+			if(shared_stats->is_busy){
+				if(send(clientfd, busy_reply.data(), busy_reply.length(), 0) == -1){
+					perror("LOG: couldn't send message");
+				}
+				continue;
+			} else{
+				if(send(clientfd, idle_reply.data(), idle_reply.length(), 0) == -1){
+					perror("LOG: couldn't send message");
+				}
+			}
+		} else{
+			perror("Unknown command");
+			exit(1);
+		}
+
+		bool send_completed = false;
+		if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
+			perror("LOG: Server did not recieve data");
+			exit(1);
+		}
+		if(cnt_bytes <= 0) break;
+		buffer[cnt_bytes] = '\0';
+
+		if(((shared_stats->last_time_served / Taloha) == (tsp / Taloha)) && shared_stats->is_busy){
+			send_huh(clientfd);
+			continue;
+		} else if(((shared_stats->last_time_served / Taloha) != (tsp / Taloha))){
+			int prev_max;
+			do {
+				prev_max = shared_stats->last_time_served;
+			} while(prev_max < !(shared_stats->last_time_served.compare_exchange_strong(prev_max, tsp)));
+			shared_stats->is_busy = false;
+		}
+
 		int offset = atoi(buffer);
-		if(offset > data_to_send.size() || offset < 0) {
+		cout << "offset " << offset << endl;
+		if(offset >= data_to_send.size() || offset < 0) {
 			if(!send_aloha(clientfd, tsp)) continue;
 			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
 				perror("LOG: couldn't send message");
 				send_completed = true;
 			}
-			shared_stats->is_busy = false;
-		} else{
-			string packet_payload = get_next_words(data_to_send, offset, words_per_packet);
-			if(!send_aloha(clientfd, tsp)) continue;
+			goto completed;
+		} 
+
+		for(int pkt_no = 0; pkt_no < (k + p - 1) / p; pkt_no++){
+			int local_offset = offset + (p * pkt_no);
+			string packet_payload = get_next_words(data_to_send, local_offset, p);
+			if(!send_aloha(clientfd, tsp)) {
+				send_completed = false;
+				break;
+			}
 			if(send(clientfd, packet_payload.data(), packet_payload.length(), 0) == -1){
 				perror("LOG: couldn't send message");
 			}
-			shared_stats->is_busy = false;
-			if((int)data_to_send.size() < offset + words_per_packet){
+			if((int)data_to_send.size() <= local_offset + p){
 				send_completed = true;
 			}
+			if(send_completed) break;
 		}
+		
+		completed:
 		if(send_completed){
-			shared_stats->is_busy = false;
-			close(clientfd);
+			// shared_stats->is_busy = false;
 			break;
 		}
 	}
+	// close(clientfd);
 	pthread_exit(NULL);
 }
 

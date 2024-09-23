@@ -94,7 +94,7 @@ int init_client_socket(std::string portNum) {
 
     inet_ntop(list->ai_family, &(((struct sockaddr_in *)list->ai_addr)->sin_addr), serveraddr, sizeof(serveraddr));
     freeaddrinfo(clientinfo);
-    printf("LOG: successfully connected to server with ip: %s\n", serveraddr);
+    // printf("LOG: successfully connected to server with ip: %s\n", serveraddr);
 
     return socketfd;
 }

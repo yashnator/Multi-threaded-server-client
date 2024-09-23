@@ -2,6 +2,8 @@
 
 using namespace std;
 
+int num_trd = 1;
+
 struct thread_args {
     int thread_id;
     int wpp;
@@ -10,6 +12,9 @@ struct thread_args {
 void *client_thread(void* td_args) { 
     json serverConfig = getServerConfig("config.json");
     string portNum = to_string(int(serverConfig["server_port"]));
+    auto start = std::chrono::high_resolution_clock::now();
+    int k = int(serverConfig["k"]);
+    int p = int(serverConfig["p"]);
 
     thread_args* args = static_cast<thread_args*>(td_args);
     int                 socketfd, cnt_bytes, itr = 0, offset = 0, words_per_packet = args->wpp;;
@@ -20,31 +25,62 @@ void *client_thread(void* td_args) {
 
     while(true){
         bool read_completed = false;
-        string offset_str = to_string(offset) + "\n";
+        string offset_str = to_string(offset).data();
         if(send(socketfd, offset_str.data(), offset_str.length(), 0) == -1){
             perror("LOG: couldn't send message");
         }
-        if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
-            perror("LOG: client could not recieve data");
-            exit(1);
-        }
-        if(cnt_bytes == 0) break;
-        buffer[cnt_bytes - 1] = '\0';
-        char* curr_word;
-        curr_word = strtok(buffer, ",");
-        while(curr_word != NULL) {
-            string curr_str = string(curr_word);
-            if(curr_str != "EOF" && curr_str != "$$") {
-                ++word_map[string(curr_word)];
-            } else{
-                read_completed = true;
-                break;
+        // cout << "LOG | Client buffer: " << buffer << endl;
+
+        int num_pkts = (k + p - 1) / p;
+        while(num_pkts){
+            if((cnt_bytes = recv(socketfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
+                perror("LOG: client could not recieve data");
+                exit(1);
             }
-            curr_word = strtok(NULL, ",");
+            if(cnt_bytes <= 0) break;
+            buffer[cnt_bytes] = '\0';
+            string pkt_str = string(buffer);
+            string curr_word = "";
+            for(int i = pkt_str.length() - 1; i >= 0; --i){
+                if(pkt_str[i] == '\n'){
+                    --num_pkts;
+                } else if(pkt_str[i] == ','){
+                    reverse(curr_word.begin(), curr_word.end());
+                    if(curr_word == "EOF" || curr_word == "$$"){
+                        read_completed = true;
+                    }
+                    ++word_map[curr_word];
+                } else{
+                    curr_word.push_back(pkt_str[i]);
+                }
+                pkt_str.pop_back();
+            }
+            if(curr_word.length() > 0) ++word_map[curr_word];
+            if(read_completed) break;
         }
+
+        printf("LOG | Iteration %d: client recieved new message\n", itr);
         ++itr;
-        if(!read_completed) offset += words_per_packet;
+        if(!read_completed) offset += k;
         else break;
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    chrono::duration<double> diff = end - start;
+    double completion_time = diff.count();
+    completion_time*=1000;
+    cout << "Completion time: " << completion_time << " seconds" << endl;
+
+    string str_to_write = to_string(num_trd) + ":" + to_string(completion_time) + " ";
+
+    std::ofstream outfile;
+    outfile.open("stats.txt", ios_base::app);
+    cout<<"comp time: "<<completion_time<<endl;
+    if (outfile.is_open()) {
+        outfile << str_to_write;
+        outfile.close();
+    } else {
+        std::cerr << "Error: Could not open stats.txt file." << endl;
     }
     close(socketfd);
     count_words_and_print_output(word_map, args->thread_id);
@@ -56,6 +92,7 @@ int main() {
     json serverConfig = getServerConfig("config.json");
     int words_per_packet = int(serverConfig["p"]);
     int num_threads = int(serverConfig["num_clients"]);
+    num_trd = num_threads;
 
     pthread_t th[num_threads];
     for(int i = 0; i < num_threads; ++i){
