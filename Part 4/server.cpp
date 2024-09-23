@@ -1,60 +1,43 @@
 #include "../utils.hpp"
-#include <atomic>
+#include <queue>
 
 using namespace std;
+
+priority_queue<int, vector<int>, greater<int>> pq;
+pthread_mutex_t queue_lock, request_lock;
 
 struct thread_args {
     int thread_id;
 	int sockfd;
 };
 
-struct server_stats {
-	atomic<bool> is_busy;
-	atomic<int> currently_serving;
-	atomic<int> last_time_served;
-
-	server_stats(): is_busy(false), currently_serving(-1), last_time_served(-1) { }
-};
-
-struct server_stats* shared_stats; // Static initialization fiasco?
-
-bool check_collision(int sockid, int sock_start_time) {
-	int prev_max;
-	do {
-		prev_max = shared_stats->last_time_served;
-	} while(prev_max < !(shared_stats->last_time_served.compare_exchange_strong(prev_max, sock_start_time)));
-	// cout << "Sending huh 1: Busy " << shared_stats->is_busy << " | Serving " << shared_stats->currently_serving << " | " << shared_stats->last_time_served << endl;
-	if(shared_stats->is_busy){
-		if(shared_stats->currently_serving == sockid){
-			if(shared_stats->last_time_served > sock_start_time) {
-				// cout << "Collision hogaya guru time se" << endl;
-				shared_stats->is_busy = false;
-				return false;
-			} else{
-				// cout << "Crow crow" << endl;
-				return true;
-			}
-		} else{
-			// cout << "Collision hogaya guru kis aur se" << endl;
-			return false;
-		}
-	} else{
-		bool expecting = false, desired = true;
-		if(shared_stats->is_busy.compare_exchange_strong(expecting, desired)){
-			// I am using this slot!
-			// cout << "milagaya" << endl;
-			shared_stats->currently_serving = sockid;
-			return true;
-		} else{
-			return false;
-		}
-	}
+void add_to_fifo(int tsp) {
+	pthread_mutex_lock(&queue_lock);
+	pq.push(tsp);
+	pthread_mutex_unlock(&queue_lock);
 }
 
-bool send_aloha(int sockfd, int tsp) {
-	if(check_collision(sockfd, tsp)) return true;
-	send(sockfd, grumpy_string.data(), grumpy_string.length(), 0);
-	return false;
+void pop_from_fifo() {
+	pthread_mutex_lock(&queue_lock);
+	pq.pop();
+	pthread_mutex_unlock(&queue_lock);
+}
+
+void send_handler(vector<string> &data_to_send, int clientfd, int offset, bool &send_completed, int words_per_packet) {
+	if(offset >= data_to_send.size() || offset < 0) {
+		if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
+			perror("LOG: couldn't send message");
+			send_completed = true;
+		}
+	} else{
+		string packet_payload = get_next_words(data_to_send, offset, words_per_packet);
+		if(send(clientfd, packet_payload.data(), packet_payload.length(), 0) == -1){
+			perror("LOG: couldn't send message");
+		}
+		if((int)data_to_send.size() <= offset + words_per_packet){
+			send_completed = true;
+		}
+	}
 }
 
 void *server_thread(void* td_args) {
@@ -93,34 +76,27 @@ void *server_thread(void* td_args) {
 	cout << "LOG: New client connected with ip: " + get_ip_address(&client_addr) + " at port " + to_string(get_port_num(&client_addr)) << endl;
 	while(true){
 		bool send_completed = false;
-		int tsp = seconds_since_epoch();
 		if((cnt_bytes = recv(clientfd, buffer, MAX_MESSAGE_LEN - 1, 0)) == -1){
 			perror("LOG: Server did not recieve data");
 			exit(1);
 		}
 		if(cnt_bytes <= 0) break;
 		buffer[cnt_bytes - 1] = '\0';
+
 		int offset = atoi(buffer);
-		if(offset >= data_to_send.size() || offset < 0) {
-			if(!send_aloha(clientfd, tsp)) continue;
-			if(send(clientfd, invalid_string.data(), invalid_string.length(), 0) == -1){
-				perror("LOG: couldn't send message");
-				send_completed = true;
-			}
-			shared_stats->is_busy = false;
-		} else{
-			string packet_payload = get_next_words(data_to_send, offset, words_per_packet);
-			if(!send_aloha(clientfd, tsp)) continue;
-			if(send(clientfd, packet_payload.data(), packet_payload.length(), 0) == -1){
-				perror("LOG: couldn't send message");
-			}
-			shared_stats->is_busy = false;
-			if((int)data_to_send.size() < offset + words_per_packet){
-				send_completed = true;
-			}
-		}
+
+		// Add to fifo and wait for your turn!
+		int recv_tsp = seconds_since_epoch();
+		add_to_fifo(recv_tsp);
+		while(recv_tsp != pq.top());
+		pop_from_fifo();
+
+		// Lock for send
+		pthread_mutex_lock(&request_lock);
+		send_handler(data_to_send, clientfd, offset, send_completed, words_per_packet);
+		pthread_mutex_unlock(&request_lock);
+
 		if(send_completed){
-			shared_stats->is_busy = false;
 			close(clientfd);
 			break;
 		}
@@ -134,11 +110,13 @@ int main() {
     string ipaddr = string(serverConfig["server_ip"]);
     string portNum = to_string(int(serverConfig["server_port"]));
 	int num_threads = int(serverConfig["num_clients"]);
-	Taloha = int(serverConfig["T"]);
 
 	int socketfd = init_server_socket(ipaddr, portNum);
 
-	shared_stats = new server_stats();
+	if((pthread_mutex_init(&queue_lock, NULL) != 0) || (pthread_mutex_init(&request_lock, NULL) != 0)){
+		perror("Mutex create failed");
+		return 1;
+	}
 
 	pthread_t th[num_threads];
 	for(int i = 0; i < num_threads; ++i){
@@ -152,6 +130,11 @@ int main() {
             perror("LOG: Couldn't close thread");
         }
     }
+
+	if((pthread_mutex_destroy(&queue_lock) != 0 )|| (pthread_mutex_destroy(&request_lock) != 0)){
+		perror("Mutex destroy failed");
+		return 1;
+	}
 
 	close(socketfd);
 

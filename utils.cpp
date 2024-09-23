@@ -6,6 +6,8 @@ const std::string busy_ask = "BUSY?\n";
 const std::string idle_reply = "IDLE\n";
 const std::string busy_reply = "BUSY\n";
 
+int Taloha = -1;
+
 void wait_for_millisec(int num_millisec){
     using namespace std::this_thread;
     using std::chrono::system_clock;

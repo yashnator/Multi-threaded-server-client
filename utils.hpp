@@ -21,15 +21,17 @@
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
 extern const std::string invalid_string;
 extern const std::string grumpy_string;
 extern const std::string busy_ask;
 extern const std::string idle_reply;
 extern const std::string busy_reply;
 
+extern int Taloha;
+
 #define MAX_BACKLOGS    	    32
-#define MAX_MESSAGE_LEN         1024
-#define Taloha                  20     
+#define MAX_MESSAGE_LEN         1024  
 
 const auto start_time = std::chrono::system_clock::now();
 const auto origin_time = std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count();

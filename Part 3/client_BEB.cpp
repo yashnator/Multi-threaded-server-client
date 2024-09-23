@@ -90,6 +90,7 @@ int main() {
     // Getting server config
     json serverConfig = getServerConfig("config.json");
     int num_threads = int(serverConfig["num_clients"]);
+    Taloha = int(serverConfig["T"]);
 
     pthread_t th[num_threads];
     for(int i = 0; i < num_threads; ++i){

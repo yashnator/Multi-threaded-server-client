@@ -161,6 +161,7 @@ int main() {
     string ipaddr = string(serverConfig["server_ip"]);
     string portNum = to_string(int(serverConfig["server_port"]));
 	int num_threads = int(serverConfig["num_clients"]);
+	Taloha = int(serverConfig["T"]);
 
 	int socketfd = init_server_socket(ipaddr, portNum);
 
